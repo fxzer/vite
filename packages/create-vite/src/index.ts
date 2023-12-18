@@ -17,8 +17,19 @@ import {
   yellow,
 } from 'kolorist'
 
+/** 本地调试：模版拷贝进行搭建脚手架
+ *  使用 pnpm crate vite ，是如何进行模版创建的？ */
+
 // Avoids autoconversion to number of the project name by defining that the args
 // non associated with an option ( _ ) needs to be parsed as a string. See #4606
+/** 将 argv._ 中的值都转换为 string 类型
+ *  -t, --template <template>  模板
+ * _[0] 项目名称
+ *
+ * -a=1 -b=2 -c3 --abc=4 ===> { _: [], a: 1, b: 2, c: 3, abc: 4 }
+ * -t=vue vue-preject ===> { _: ['vue-project'], t: 'vue' }
+ * -t -r ===> { _: [], t: true, r: true }
+ */
 const argv = minimist<{
   t?: string
   template?: string
@@ -231,9 +242,14 @@ const FRAMEWORKS: Framework[] = [
   },
 ]
 
+// const TEMPLATES = FRAMEWORKS.map(
+//   (f) => (f.variants && f.variants.map((v) => v.name)) || [f.name],
+// ).reduce((a, b) => a.concat(b), [])
+
+/* 获取模版变体名称 */
 const TEMPLATES = FRAMEWORKS.map(
   (f) => (f.variants && f.variants.map((v) => v.name)) || [f.name],
-).reduce((a, b) => a.concat(b), [])
+).flat()
 
 const renameFiles: Record<string, string | undefined> = {
   _gitignore: '.gitignore',
@@ -246,6 +262,8 @@ async function init() {
   const argTemplate = argv.template || argv.t
 
   let targetDir = argTargetDir || defaultTargetDir
+
+  /** 是 . ， 则返回最后一级目录名 */
   const getProjectName = () =>
     targetDir === '.' ? path.basename(path.resolve()) : targetDir
 
@@ -257,7 +275,7 @@ async function init() {
     result = await prompts(
       [
         {
-          type: argTargetDir ? null : 'text',
+          type: argTargetDir ? null : 'text', // 没有指定项目名称，则需要输入
           name: 'projectName',
           message: reset('Project name:'),
           initial: defaultTargetDir,
@@ -266,6 +284,7 @@ async function init() {
           },
         },
         {
+          // 如果目标目录不存在，或者目标目录为空，则不需要选择
           type: () =>
             !fs.existsSync(targetDir) || isEmpty(targetDir) ? null : 'select',
           name: 'overwrite',
@@ -300,6 +319,7 @@ async function init() {
           name: 'overwriteChecker',
         },
         {
+          /* 验证 package.json -- name 包名是否有效，请求重新输入，并格式化输入 */
           type: () => (isValidPackageName(getProjectName()) ? null : 'text'),
           name: 'packageName',
           message: reset('Package name:'),
@@ -308,6 +328,7 @@ async function init() {
             isValidPackageName(dir) || 'Invalid package.json name',
         },
         {
+          /* 选框架 */
           type:
             argTemplate && TEMPLATES.includes(argTemplate) ? null : 'select',
           name: 'framework',
@@ -327,6 +348,7 @@ async function init() {
           }),
         },
         {
+          /** 根据上一步选的框架，选框架中的模版 */
           type: (framework: Framework) =>
             framework && framework.variants ? 'select' : null,
           name: 'variant',
@@ -357,6 +379,7 @@ async function init() {
 
   const root = path.join(cwd, targetDir)
 
+  /** 准备目录 */
   if (overwrite === 'yes') {
     emptyDir(root)
   } else if (!fs.existsSync(root)) {
@@ -375,10 +398,12 @@ async function init() {
   const pkgManager = pkgInfo ? pkgInfo.name : 'npm'
   const isYarn1 = pkgManager === 'yarn' && pkgInfo?.version.startsWith('1.')
 
+  /* 获取模版对应的自定义命令 */
   const { customCommand } =
     FRAMEWORKS.flatMap((f) => f.variants).find((v) => v.name === template) ?? {}
 
   if (customCommand) {
+    /* 补全各自包管理器对应的命令 */
     const fullCustomCommand = customCommand
       .replace(/^npm create /, () => {
         // `bun create` uses it's own set of templates,
@@ -409,14 +434,16 @@ async function init() {
     const [command, ...args] = fullCustomCommand.split(' ')
     // we replace TARGET_DIR here because targetDir may include a space
     const replacedArgs = args.map((arg) => arg.replace('TARGET_DIR', targetDir))
+    // 开启子进程执行命令
     const { status } = spawn.sync(command, replacedArgs, {
-      stdio: 'inherit',
+      stdio: 'inherit', // 子进程的输出流，继承父进程的输出流
     })
     process.exit(status ?? 0)
   }
 
   console.log(`\nScaffolding project in ${root}...`)
 
+  // 获取模版目录路径
   const templateDir = path.resolve(
     fileURLToPath(import.meta.url),
     '../..',
@@ -432,6 +459,7 @@ async function init() {
     }
   }
 
+  // 读取模版目录下的文件名 和 目录名，循环递归拷贝到目标目录
   const files = fs.readdirSync(templateDir)
   for (const file of files.filter((f) => f !== 'package.json')) {
     write(file)
@@ -471,6 +499,7 @@ async function init() {
   console.log()
 }
 
+/** 去除 空格 和 斜杠 */
 function formatTargetDir(targetDir: string | undefined) {
   return targetDir?.trim().replace(/\/+$/g, '')
 }
@@ -484,12 +513,14 @@ function copy(src: string, dest: string) {
   }
 }
 
+/** 检验是否为有效 npm 包名 */
 function isValidPackageName(projectName: string) {
   return /^(?:@[a-z\d\-*~][a-z\d\-*._~]*\/)?[a-z\d\-~][a-z\d\-._~]*$/.test(
     projectName,
   )
 }
 
+/* 转为有效包名 */
 function toValidPackageName(projectName: string) {
   return projectName
     .trim()
@@ -525,6 +556,7 @@ function emptyDir(dir: string) {
   }
 }
 
+/** 从环境变量的用户代理字符串中提取包名和版本信息  */
 function pkgFromUserAgent(userAgent: string | undefined) {
   if (!userAgent) return undefined
   const pkgSpec = userAgent.split(' ')[0]
