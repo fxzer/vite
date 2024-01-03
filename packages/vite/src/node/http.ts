@@ -152,7 +152,9 @@ export async function httpServerStart(
   return new Promise((resolve, reject) => {
     const onError = (e: Error & { code?: string }) => {
       if (e.code === 'EADDRINUSE') {
+        // 地址已经被占用
         if (strictPort) {
+          // 严格端口
           httpServer.removeListener('error', onError)
           reject(new Error(`Port ${port} is already in use`))
         } else {
